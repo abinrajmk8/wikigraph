@@ -1,6 +1,8 @@
 
 
-#  `shared/graph.go` — Full Breakdown
+---
+
+# 📦 `shared/graph.go` — Full Breakdown
 
 This file defines the **shared data structure** used by **both the scraper and the API**.
 
@@ -113,7 +115,7 @@ Used by the API to load graph on startup.
 
 ---
 
-#  Roles of Each File
+# 🔧 Roles of Each File
 
 ###  Scraper (`scraper/fetch.go`)
 
@@ -130,7 +132,7 @@ Used by the API to load graph on startup.
 
 ---
 
-# 🎯 First Increment: Full Working Demo
+#  First Increment: Full Working Demo
 
 ### 🧪 Example Input
 
@@ -165,7 +167,7 @@ Graph JSON will look like:
 
 ---
 
-### 📥 API Input
+###  API Input
 
 GET Request:
 
@@ -175,7 +177,7 @@ http://localhost:8080/query?q=Albert Einstein
 
 ---
 
-### 📤 Output JSON
+###  Output JSON
 
 ```json
 {
@@ -215,7 +217,7 @@ curl "http://localhost:8080/query?q=Albert Einstein"
 
 ###  Each Member Should:
 
-| Task                  | Member A          | Member B          |
+| Task                  |     Abin          | Fellah            |
 | --------------------- | ----------------- | ----------------- |
 | Create branch         | `feature/scraper` | `feature/query`   |
 | Work in               | `scraper/`        | `api/`            |
@@ -253,5 +255,111 @@ git push origin main
    ```bash
    git pull --rebase origin main
    ```
+
+---
+
+Let me know if you want a **real Wikipedia scraper next** or a template README for your project!
+---
+
+#  Increment 1: Static Graph with Query API
+
+This milestone builds the first working version of WikiGraph — with a hardcoded mini-knowledge graph and a working query API.
+
+---
+
+## 📌 Goal
+
+- [x] Scraper generates a small graph manually
+- [x] Saves it to `data/graph.json`
+- [x] API loads this file and serves queries over HTTP
+
+---
+
+## 🧩 Scraper: `scraper/fetch.go`
+
+**Responsibility: Abin**
+
+### ✅ What It Does
+
+- Creates a new graph using `shared.NewGraph()`
+- Manually adds nodes and relationships using `AddEdge()`
+- Saves graph to `data/graph.json` using `SaveToFile()`
+
+### 🧪 Example Code
+
+```go
+graph := shared.NewGraph()
+graph.AddEdge("Albert Einstein", "Physics")
+graph.AddEdge("Albert Einstein", "Nobel Prize")
+graph.AddEdge("Physics", "Science")
+graph.AddEdge("Nobel Prize", "Awards")
+graph.AddEdge("Science", "Knowledge")
+graph.SaveToFile("data/graph.json")
+```
+
+---
+
+## 🌐 API: `api/server.go`
+
+**Responsibility: Fellah**
+
+### ✅ What It Does
+
+- Loads graph using `LoadFromFile("data/graph.json")`
+- Starts HTTP server on port 8080
+- Handles: `/query?q=Albert Einstein`
+- Returns entity and its edges as JSON
+
+### 🧪 Example API Response
+
+GET:
+```
+http://localhost:8080/query?q=Albert Einstein
+```
+
+Response:
+```json
+{
+  "name": "Albert Einstein",
+  "edges": ["Physics", "Nobel Prize"]
+}
+```
+
+---
+
+##  How to Run Locally
+
+### 1. Run Scraper
+
+```bash
+go run scraper/fetch.go
+```
+
+Check: `data/graph.json` should be created.
+
+### 2. Run API Server
+
+```bash
+go run api/server.go
+```
+
+Open browser or use:
+```bash
+curl "http://localhost:8080/query?q=Albert Einstein"
+```
+
+---
+
+## 🤝 Collaboration Notes
+
+| Task                | Abin A(Scraper)  | Fellah B (API) |
+|---------------------|---------------------|----------------|
+| Create graph         | ✅                   | ❌              |
+| Save graph           | ✅                   | ❌              |
+| Load graph           | ❌                   | ✅              |
+| Handle queries       | ❌                   | ✅              |
+| Use shared module    | ✅                   | ✅              |
+
+> ⚠️ `graph.json` is not pushed to GitHub (it's in .gitignore). Each member should run the scraper locally.
 
 ---
