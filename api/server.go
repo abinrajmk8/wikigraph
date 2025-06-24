@@ -39,7 +39,7 @@ func queryHandler(w http.ResponseWriter, r *http.Request) {
 
 func main() {
 	var err error
-	graph, err := shared.LoadFromFile("data/graph.json") //edit this line to the required filename
+	graph, err = shared.LoadFromFile("data/graph.json")
 
 	if err != nil {
 		log.Fatalf("Failed to load graph: %v", err) // automatically exists
