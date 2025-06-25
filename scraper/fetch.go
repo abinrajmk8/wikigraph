@@ -45,7 +45,7 @@ type linkResponse struct {
 func ExtractEntitiesFromWikipedia(title string) ([]string, error) {
 	ctx := context.Background()
 
-	/* 1️⃣  Resolve canonical title  */
+	/* 1️  Resolve canonical title  */
 	summaryURL := fmt.Sprintf(
 		"https://en.wikipedia.org/api/rest_v1/page/summary/%s",
 		url.PathEscape(title),
@@ -60,7 +60,7 @@ func ExtractEntitiesFromWikipedia(title string) ([]string, error) {
 	}
 	canonical := s.Titles.Canonical // "Albert_Einstein"
 
-	/* 2️⃣  Fetch up-to-20 outgoing links */
+	/* 2️  Fetch up-to-20 outgoing links */
 	linksURL := fmt.Sprintf(
 		"https://en.wikipedia.org/w/api.php?action=query&titles=%s&prop=links&format=json&pllimit=20",
 		canonical,
@@ -116,7 +116,8 @@ func fetchJSON(ctx context.Context, url string) ([]byte, error) {
 ------------------------------------------------------------
 */
 func main() {
-	seed := "Albert Einstein" // change or loop over more topics
+	// seed := "Albert Einstein" // change or loop over more topics
+	seed := "hitler"
 	fmt.Printf("[+] Fetching related pages for %q…\n", seed)
 
 	related, err := ExtractEntitiesFromWikipedia(seed)
