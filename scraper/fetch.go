@@ -15,13 +15,6 @@ import (
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
 
-/* ------------------------------------------------------------
-   fetch.go — scrape, extract, ingest directly into Neo4j
-   --------------------------------------------------------
-   • Uses .env for GEMINI_API_KEY and NEO4J_* creds
-   • No more graph.json; data is persisted in Aura
-------------------------------------------------------------*/
-
 const (
 	seedPerson  = "Albert Einstein"
 	wikiAPIURL  = "https://en.wikipedia.org/w/api.php"
@@ -229,5 +222,5 @@ func main() {
 	if err := ingestNeo4j(relations); err != nil {
 		log.Fatalf("neo4j ingest error: %v", err)
 	}
-	fmt.Println("✅ Data written to Neo4j!")
+	fmt.Println(" Data written to Neo4j!")
 }
