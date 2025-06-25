@@ -5,14 +5,36 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 
 	"github.com/abinrajmk8/wikigraph/shared"
 
 	"github.com/gorilla/mux"
 )
 
-// take the function from shared package
 var graph *shared.Graph
+
+func main() {
+	var err error
+	graph, err = shared.LoadFromFile("data/graph.json") //edit this line to the required filename
+
+	if err != nil {
+		log.Fatalf("Failed to load graph: %v", err) // automatically exists
+	}
+
+	r := mux.NewRouter() //initialise router
+
+	r.HandleFunc("/query", queryHandler).Methods("GET")
+	r.HandleFunc("/search", handleSearch).Methods("GET")
+
+	//start server
+	log.Println("Server started at localhost: 8080")
+	log.Fatal(http.ListenAndServe(":8080", r))
+	log.Printf("Graph loaded with %d nodes", len(graph.Nodes))
+
+	fmt.Println("Server started at localhost: 8080")
+
+}
 
 // Handler for /q endpoint
 func queryHandler(w http.ResponseWriter, r *http.Request) {
@@ -37,23 +59,33 @@ func queryHandler(w http.ResponseWriter, r *http.Request) {
 
 }
 
-func main() {
-	var err error
-	graph, err = shared.LoadFromFile("data/graph.json")
+func handleSearch(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	query := r.URL.Query().Get("q")
 
-	if err != nil {
-		log.Fatalf("Failed to load graph: %v", err) // automatically exists
+	if query == "" {
+		http.Error(w, "Missing value for 'q' ", http.StatusBadRequest)
+		return
 	}
 
-	r := mux.NewRouter() //initialise router
+	var result []string
 
-	r.HandleFunc("/query", queryHandler).Methods("GET")
+	for _, node := range graph.Nodes {
+		if strings.Contains(strings.ToLower(node.Name), strings.ToLower(query)) {
+			result = append(result, node.Name)
+		}
 
-	//start server
-	log.Println("Server started at localhost: 8080")
-	log.Fatal(http.ListenAndServe(":8080", r))
-	log.Printf("Graph loaded with %d nodes", len(graph.Nodes))
+		for _, edge := range node.Edges {
+			if strings.Contains(strings.ToLower(edge), strings.ToLower(query)) {
+				result = append(result, edge)
+			}
+		}
+	}
 
-	fmt.Println("Server started at localhost: 8080")
+	if len(result) == 0 {
+		http.Error(w, "No result found", http.StatusNotFound)
+		return
+	}
 
+	json.NewEncoder(w).Encode(result)
 }
