@@ -60,3 +60,6 @@ __pycache__/
 # Frontend build (if applicable later)
 frontend/dist/
 frontend/node_modules/
+
+#environment variables
+.env
