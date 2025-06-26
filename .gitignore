@@ -9,6 +9,8 @@
 *.dylib
 *.test
 *.out
+.env
+*.env
 
 # Go Vendor
 /vendor/
