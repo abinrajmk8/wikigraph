@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 
 	"github.com/joho/godotenv"
@@ -16,10 +17,9 @@ import (
 )
 
 const (
-	seedPerson  = "Albert Einstein"
-	wikiAPIURL  = "https://en.wikipedia.org/w/api.php"
-	geminiURL   = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
-	maxKeywords = 15
+	seedPerson = "Isaac Newton"
+	wikiAPIURL = "https://en.wikipedia.org/w/api.php"
+	geminiURL  = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
 )
 
 var (
@@ -37,9 +37,9 @@ func init() {
 	neo4jPassword = os.Getenv("NEO4J_PASSWORD")
 }
 
-/* ---------------- Wikipedia helper ---------------- */
+//fetch raw article
 
-func fetchWikiExtract(title string) (string, error) {
+func fetchExtract(title string) (string, error) {
 	req, _ := http.NewRequest("GET", wikiAPIURL, nil)
 	q := req.URL.Query()
 	q.Set("action", "query")
@@ -49,7 +49,7 @@ func fetchWikiExtract(title string) (string, error) {
 	q.Set("titles", title)
 	q.Set("format", "json")
 	req.URL.RawQuery = q.Encode()
-	req.Header.Set("User-Agent", "wikigraph-ingest/1.1")
+	req.Header.Set("User-Agent", "wikigraph-triples/1.0")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -62,23 +62,31 @@ func fetchWikiExtract(title string) (string, error) {
 		return "", fmt.Errorf("wiki status %d: %s", resp.StatusCode, b)
 	}
 
-	var wiki struct {
+	var res struct {
 		Query struct {
 			Pages map[string]struct {
 				Extract string `json:"extract"`
 			} `json:"pages"`
 		} `json:"query"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&wiki); err != nil {
+	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
 		return "", err
 	}
-	for _, pg := range wiki.Query.Pages {
-		return pg.Extract, nil
+	for _, pg := range res.Query.Pages {
+		cleaned := strings.ReplaceAll(pg.Extract, "\n", " ")
+		cleaned = strings.ReplaceAll(cleaned, "/", " ")
+		cleaned = strings.ReplaceAll(cleaned, "=", " ")
+		return strings.TrimSpace(cleaned), nil
 	}
-	return "", fmt.Errorf("no extract found for %s", title)
+	return "", fmt.Errorf("no extract found")
 }
 
-/* ---------------- Gemini helper ---------------- */
+//llm triples
+
+type triple struct {
+	Predicate string `json:"predicate"`
+	Object    string `json:"object"`
+}
 
 type gemReq struct {
 	Contents []struct {
@@ -98,101 +106,99 @@ type gemResp struct {
 	} `json:"candidates"`
 }
 
-func extractRelations(text string) ([]string, error) {
+func extractTriples(text string) ([]triple, error) {
 	if geminiAPIKey == "" {
-		return nil, fmt.Errorf("GEMINI_API_KEY not set")
+		return nil, fmt.Errorf("GEMINI_API_KEY missing")
 	}
 
-	prompt := fmt.Sprintf(`From the text below, extract at most %d short keywords or phrases that represent the key topics and domains associated with the *person* %s.\nReturn ONLY a JSON array of strings.\n\n---\n\n%s`, maxKeywords, seedPerson, text)
+	prompt := `Extract key factual triples about the person ` + seedPerson + ` from the text below.
+Return **ONLY** a JSON array of objects with exact keys "predicate" and "object". 
+Use concise, CamelCase predicates such as "BornIn", "WonAward", "KnownFor", "DiedIn", "Field", "Nationality".
+Example output:
+[
+  {"predicate":"BornIn","object":"Ulm, Kingdom of Württemberg"},
+  {"predicate":"WonAward","object":"1921 Nobel Prize in Physics"}
+]
+Do not include the subject in each object, only predicate & object.
 
-	body, _ := json.Marshal(gemReq{Contents: []struct {
+---
+
+` + text
+
+	req := gemReq{Contents: []struct {
 		Parts []struct {
 			Text string `json:"text"`
 		} `json:"parts"`
 	}{{Parts: []struct {
 		Text string `json:"text"`
-	}{{Text: prompt}}}}})
+	}{{Text: prompt}}}}}
+	data, _ := json.Marshal(req)
 
-	resp, err := http.Post(fmt.Sprintf("%s?key=%s", geminiURL, geminiAPIKey), "application/json", bytes.NewReader(body))
+	resp, err := http.Post(fmt.Sprintf("%s?key=%s", geminiURL, geminiAPIKey), "application/json", bytes.NewReader(data))
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
-
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("gemini status %d: %s", resp.StatusCode, b)
+		return nil, fmt.Errorf("gemini %d: %s", resp.StatusCode, b)
 	}
 
 	var g gemResp
 	if err := json.NewDecoder(resp.Body).Decode(&g); err != nil {
 		return nil, err
 	}
-
 	if len(g.Candidates) == 0 {
-		return nil, fmt.Errorf("empty Gemini response")
+		return nil, fmt.Errorf("empty response")
 	}
 
 	raw := strings.TrimSpace(g.Candidates[0].Content.Parts[0].Text)
-	if strings.HasPrefix(raw, "```") {
-		raw = strings.Trim(raw, "`\n ")
-	}
+	raw = strings.Trim(raw, "`\n ")
+	raw = strings.TrimPrefix(raw, "json")
+	raw = strings.TrimSpace(raw)
 
-	var arr []string
-	if err := json.Unmarshal([]byte(raw), &arr); err == nil {
-		return dedup(arr), nil
+	var triples []triple
+	if err := json.Unmarshal([]byte(raw), &triples); err != nil {
+		return nil, fmt.Errorf("parse triples: %v\nraw: %s", err, raw)
 	}
-
-	// Fallback naive split
-	for _, tok := range strings.FieldsFunc(raw, func(r rune) bool { return r == ',' || r == '\n' }) {
-		if s := strings.TrimSpace(tok); s != "" {
-			arr = append(arr, s)
-		}
-	}
-	return dedup(arr), nil
+	return triples, nil
 }
 
-func dedup(in []string) []string {
-	seen := map[string]struct{}{}
-	out := []string{}
-	for _, s := range in {
-		if _, ok := seen[s]; ok {
-			continue
-		}
-		seen[s] = struct{}{}
-		out = append(out, s)
+// ingest triples
+var reUnsafe = regexp.MustCompile(`[^A-Za-z0-9_]`)
+
+func relType(pred string) string {
+	s := reUnsafe.ReplaceAllString(pred, "_")
+	if s == "" {
+		s = "RELATED"
 	}
-	return out
+	return s
 }
 
-/* ---------------- Neo4j ingest ---------------- */
-
-func ingestNeo4j(relations []string) error {
-	if neo4jURI == "" || neo4jUser == "" || neo4jPassword == "" {
-		return fmt.Errorf("NEO4J credentials not set in .env")
-	}
-
+func ingest(triples []triple, summary string) error {
 	ctx := context.Background()
-	driver, err := neo4j.NewDriverWithContext(neo4jURI, neo4j.BasicAuth(neo4jUser, neo4jPassword, ""))
+	drv, err := neo4j.NewDriverWithContext(neo4jURI, neo4j.BasicAuth(neo4jUser, neo4jPassword, ""))
 	if err != nil {
 		return err
 	}
-	defer driver.Close(ctx)
+	defer drv.Close(ctx)
 
-	session := driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
-	defer session.Close(ctx)
+	sess := drv.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
+	defer sess.Close(ctx)
 
-	_, err = session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
-		_, e := tx.Run(ctx, `MERGE (p:Person {name:$name})`, map[string]any{"name": seedPerson})
+	_, err = sess.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		_, e := tx.Run(ctx, `MERGE (p:Person {name:$name}) ON CREATE SET p.summary=$sum`, map[string]any{"name": seedPerson, "sum": summary})
 		return nil, e
 	})
 	if err != nil {
 		return err
 	}
 
-	for _, kw := range relations {
-		_, err = session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
-			_, e := tx.Run(ctx, `MERGE (p:Person {name:$seed}) MERGE (t:Topic {name:$topic}) MERGE (p)-[:RELATED_TO]->(t)`, map[string]any{"seed": seedPerson, "topic": kw})
+	for _, tr := range triples {
+		rel := relType(tr.Predicate)
+		_, err = sess.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+			cypher := fmt.Sprintf(`MERGE (p:Person {name:$name}) MERGE (o:Entity {name:$obj}) MERGE (p)-[:%s]->(o)`, rel)
+			_, e := tx.Run(ctx, cypher, map[string]any{"name": seedPerson, "obj": tr.Object})
 			return nil, e
 		})
 		if err != nil {
@@ -202,25 +208,25 @@ func ingestNeo4j(relations []string) error {
 	return nil
 }
 
-/* ---------------- main ---------------- */
+//main
 
 func main() {
-	fmt.Printf("[+] Seed: %s\n", seedPerson)
+	fmt.Println("[+] Ingesting", seedPerson)
 
-	extract, err := fetchWikiExtract(seedPerson)
+	text, err := fetchExtract(seedPerson)
 	if err != nil {
-		log.Fatalf("wiki error: %v", err)
+		log.Fatal(err)
 	}
-	fmt.Printf("    Extract length: %d chars\n", len(extract))
+	fmt.Println("    extract chars:", len(text))
 
-	relations, err := extractRelations(extract)
+	triples, err := extractTriples(text)
 	if err != nil {
-		log.Fatalf("gemini error: %v", err)
+		log.Fatal(err)
 	}
-	fmt.Printf("    Gemini keywords: %v\n", relations)
+	fmt.Printf("    triples: %v\n", triples)
 
-	if err := ingestNeo4j(relations); err != nil {
-		log.Fatalf("neo4j ingest error: %v", err)
+	if err := ingest(triples, text); err != nil {
+		log.Fatal(err)
 	}
-	fmt.Println(" Data written to Neo4j!")
+	fmt.Println(" written to Neo4j")
 }
