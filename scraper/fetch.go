@@ -16,8 +16,12 @@ import (
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
 
+/* ------------------------------------------------------------
+   fetch.go — scrape, extract triples, ingest into Neo4j
+   ------------------------------------------------------------*/
+
 const (
-	seedPerson = "Isaac Newton"
+	seedPerson = "Albert Einstein"
 	wikiAPIURL = "https://en.wikipedia.org/w/api.php"
 	geminiURL  = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
 )
@@ -37,7 +41,7 @@ func init() {
 	neo4jPassword = os.Getenv("NEO4J_PASSWORD")
 }
 
-//fetch raw article
+/* ---------- STEP 1: fetch raw article text ---------- */
 
 func fetchExtract(title string) (string, error) {
 	req, _ := http.NewRequest("GET", wikiAPIURL, nil)
@@ -49,7 +53,7 @@ func fetchExtract(title string) (string, error) {
 	q.Set("titles", title)
 	q.Set("format", "json")
 	req.URL.RawQuery = q.Encode()
-	req.Header.Set("User-Agent", "wikigraph-triples/1.0")
+	req.Header.Set("User-Agent", "wikigraph-triples/1.1")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -81,7 +85,7 @@ func fetchExtract(title string) (string, error) {
 	return "", fmt.Errorf("no extract found")
 }
 
-//llm triples
+/* ---------- STEP 2: LLM → triples ---------- */
 
 type triple struct {
 	Predicate string `json:"predicate"`
@@ -113,17 +117,7 @@ func extractTriples(text string) ([]triple, error) {
 
 	prompt := `Extract key factual triples about the person ` + seedPerson + ` from the text below.
 Return **ONLY** a JSON array of objects with exact keys "predicate" and "object". 
-Use concise, CamelCase predicates such as "BornIn", "WonAward", "KnownFor", "DiedIn", "Field", "Nationality".
-Example output:
-[
-  {"predicate":"BornIn","object":"Ulm, Kingdom of Württemberg"},
-  {"predicate":"WonAward","object":"1921 Nobel Prize in Physics"}
-]
-Do not include the subject in each object, only predicate & object.
-
----
-
-` + text
+Use concise, CamelCase predicates such as "BornIn", "WonAward", "KnownFor", "DiedIn", "Field", "Nationality".` + "\n\n---\n\n" + text
 
 	req := gemReq{Contents: []struct {
 		Parts []struct {
@@ -164,7 +158,8 @@ Do not include the subject in each object, only predicate & object.
 	return triples, nil
 }
 
-// ingest triples
+/* ---------- STEP 3: ingest triples ---------- */
+
 var reUnsafe = regexp.MustCompile(`[^A-Za-z0-9_]`)
 
 func relType(pred string) string {
@@ -173,6 +168,10 @@ func relType(pred string) string {
 		s = "RELATED"
 	}
 	return s
+}
+
+func norm(s string) string {
+	return strings.ToLower(strings.Join(strings.Fields(strings.TrimSpace(s)), " "))
 }
 
 func ingest(triples []triple, summary string) error {
@@ -194,13 +193,28 @@ func ingest(triples []triple, summary string) error {
 		return err
 	}
 
+	seen := make(map[string]bool)
+
 	for _, tr := range triples {
 		rel := relType(tr.Predicate)
+		objNorm := norm(tr.Object)
+		key := rel + "::" + objNorm
+		if seen[key] {
+			fmt.Printf("duplicate found %s::%s skipping\n", rel, tr.Object)
+			continue
+		}
+		seen[key] = true
+
 		_, err = sess.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
-			cypher := fmt.Sprintf(`MERGE (p:Person {name:$name}) MERGE (o:Entity {name:$obj}) MERGE (p)-[:%s]->(o)`, rel)
-			_, e := tx.Run(ctx, cypher, map[string]any{"name": seedPerson, "obj": tr.Object})
+			cypher := fmt.Sprintf(`MERGE (p:Person {name:$name}) MERGE (o:Entity {norm:$norm}) ON CREATE SET o.name=$obj MERGE (p)-[:%s]->(o)`, rel)
+			_, e := tx.Run(ctx, cypher, map[string]any{
+				"name": seedPerson,
+				"obj":  tr.Object,
+				"norm": norm(tr.Object),
+			})
 			return nil, e
 		})
+
 		if err != nil {
 			return err
 		}
@@ -208,7 +222,7 @@ func ingest(triples []triple, summary string) error {
 	return nil
 }
 
-//main
+/* ---------- MAIN ---------- */
 
 func main() {
 	fmt.Println("[+] Ingesting", seedPerson)
