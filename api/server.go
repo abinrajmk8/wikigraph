@@ -201,75 +201,84 @@ func detectIntentFromTokens(tokens []string) string {
 		"Employer", "DoctoralInstitution", "Theory", "Membership", "Citizenship",
 	}
 
-	// Step 1: Direct prefix match
+	// Step 1: Direct token match with relation prefix
 	for _, token := range tokens {
 		for _, rel := range relations {
 			parts := splitCamelCase(rel)
-			if len(parts) > 0 {
-				prefix := strings.ToLower(parts[0])
-				if prefix == token {
-					return token
-				}
+			if len(parts) > 0 && strings.ToLower(parts[0]) == token {
+				return rel
 			}
 		}
 	}
 
-	// Step 2: Check relation prefix synonyms against tokens
+	// Step 2: Match relation prefix synonyms with token
 	for _, rel := range relations {
 		parts := splitCamelCase(rel)
 		if len(parts) == 0 {
 			continue
 		}
 		prefix := strings.ToLower(parts[0])
-
 		syns, err := synonyms.GetSynonyms(prefix, 5)
 		if err != nil {
 			continue
 		}
-
 		for _, token := range tokens {
 			for _, syn := range syns {
-				if syn == token {
-					return token
+				if token == syn {
+					return rel
 				}
 			}
 		}
 	}
 
-	return "generalinfo"
+	// Step 3: Detect "all details" or general intent
+	for _, token := range tokens {
+		if token == "details" || token == "info" || token == "information" || token == "about" {
+			return "generalinfo"
+		}
+	}
+
+	return ""
 }
 
 // Maps detected intent to relation(s)
 func matchIntentToRelations(intent string) ([]string, error) {
-	intent = strings.ToLower(intent)
 	relations := []string{
 		"BirthPlace", "BirthDate", "DiedIn", "DeathDate", "Field", "KnownFor",
 		"Nationality", "Awarded", "WorkedAt", "StudiedAt", "AwardYear",
 		"Employer", "DoctoralInstitution", "Theory", "Membership", "Citizenship",
 	}
 
-	var matched []string
-
-	// Step 1: Direct prefix match
+	// 1. Exact match
 	for _, rel := range relations {
-		parts := splitCamelCase(rel)
-		if len(parts) > 0 {
-			prefix := strings.ToLower(parts[0])
-			if prefix == intent {
-				matched = append(matched, rel)
-			}
+		if strings.EqualFold(rel, intent) {
+			return []string{rel}, nil
 		}
 	}
+
+	// 2. Handle general info
+	if strings.EqualFold(intent, "generalinfo") {
+		return relations, nil
+	}
+
+	// 3. Match by prefix
+	var matched []string
+	for _, rel := range relations {
+		parts := splitCamelCase(rel)
+		if len(parts) > 0 && strings.ToLower(parts[0]) == strings.ToLower(intent) {
+			matched = append(matched, rel)
+		}
+	}
+
 	if len(matched) > 0 {
 		return matched, nil
 	}
 
-	// Step 2: Check synonym of intent against relation prefixes
+	// 4. Check synonyms
 	syns, err := synonyms.GetSynonyms(intent, 5)
 	if err != nil {
 		return nil, err
 	}
-
 	for _, rel := range relations {
 		parts := splitCamelCase(rel)
 		if len(parts) == 0 {
@@ -308,7 +317,24 @@ func splitCamelCase(s string) []string {
 
 // Builds Cypher query based on relation
 func buildCypher(relation, entity string) (string, map[string]interface{}) {
-	query := fmt.Sprintf(`MATCH (a) WHERE toLower(a.name) = toLower($name) MATCH (a)-[:%s]->(b) RETURN collect(b.name) AS related`, relation)
+	if strings.ToLower(relation) == "generalinfo" {
+		// Match all outgoing relationships from the entity
+		query := `
+			MATCH (a) 
+			WHERE toLower(a.name) = toLower($name) 
+			MATCH (a)-[r]->(b) 
+			RETURN type(r) AS relation, collect(b.name) AS related
+		`
+		return query, map[string]interface{}{"name": entity}
+	}
+
+	// Specific relation match
+	query := fmt.Sprintf(`
+		MATCH (a) 
+		WHERE toLower(a.name) = toLower($name) 
+		MATCH (a)-[:%s]->(b) 
+		RETURN collect(b.name) AS related
+	`, relation)
 	return query, map[string]interface{}{"name": entity}
 }
 
