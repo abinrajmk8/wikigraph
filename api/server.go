@@ -21,11 +21,9 @@ var graph *shared.Graph
 var driver neo4j.DriverWithContext
 
 func main() {
-
-	// Initialize Neo4j driver
-	er := godotenv.Load()
-	if er != nil {
-		log.Fatalf("Error loading .env file: %v", er) // automatically exits
+	// Load .env file
+	if er := godotenv.Load(); er != nil {
+		log.Fatalf("Error loading .env file: %v", er)
 	}
 
 	uri := os.Getenv("NEO4J_URI")
@@ -40,21 +38,15 @@ func main() {
 	}
 	defer driver.Close(ctx)
 
-	r := mux.NewRouter() //initialise router
-
+	r := mux.NewRouter()
 	r.HandleFunc("/query", queryHandler).Methods("GET")
 	r.HandleFunc("/search", handleSearch).Methods("GET")
 
-	//start server
 	log.Println("Server started at localhost: 8080")
 	log.Fatal(http.ListenAndServe(":8080", r))
-	log.Printf("Graph loaded with %d nodes", len(graph.Nodes))
-
-	fmt.Println("Server started at localhost: 8080")
-
 }
 
-// Handler for /q endpoint
+// Handles NLP queries
 func queryHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	rawQuery := r.URL.Query().Get("q")
@@ -78,7 +70,7 @@ func queryHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Printf("Checking relation: %s against intent: %s", relations, intent)
 
-	//neo4j query
+	// Query Neo4j
 	ctx := context.Background()
 	session := driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeRead})
 	defer session.Close(ctx)
@@ -123,6 +115,7 @@ func queryHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// Basic search by partial entity name
 func handleSearch(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	query := r.URL.Query().Get("q")
@@ -132,7 +125,6 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	//neo4j query
 	ctx := context.Background()
 	session := driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeRead})
 	defer session.Close(ctx)
@@ -141,7 +133,7 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 		`MATCH (n)
 		WHERE toLower(n.name) CONTAINS toLower($query)
 		RETURN n.name LIMIT 10`,
-		map[string]interface{}{"query": query}) // Pass the query parameter to the Cypher query
+		map[string]interface{}{"query": query})
 
 	if err != nil {
 		http.Error(w, "Query failed: "+err.Error(), http.StatusInternalServerError)
@@ -151,8 +143,7 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 	var matches []string
 	for result.Next(ctx) {
 		name, _ := result.Record().Get("n.name")
-		cleaned := strings.Trim(fmt.Sprint(name), `"`) // remove surrounding quotes
-		matches = append(matches, cleaned)
+		matches = append(matches, strings.Trim(fmt.Sprint(name), `"`))
 	}
 
 	if len(matches) == 0 {
@@ -163,86 +154,143 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(matches)
 }
 
+// Extracts entity and intent token from query using NLP and token filtering
 func extractEntityAndIntent(query string) (string, string) {
 	doc, err := prose.NewDocument(query)
 	if err != nil {
 		log.Println("Error parsing query:", err)
 		return "", ""
 	}
+
+	// Extract entity
 	var entity string
+	entityWords := map[string]bool{}
 	for _, ent := range doc.Entities() {
 		if ent.Label == "PERSON" || ent.Label == "ORG" {
 			entity = ent.Text
+			for _, word := range strings.Fields(ent.Text) {
+				entityWords[strings.ToLower(word)] = true
+			}
 			break
 		}
 	}
-	intentKeywords := []string{"born", "died", "award", "prize", "receive", "won", "work", "field", "known", "nationality", "occupation", "citizen", "study"}
-	queryLower := strings.ToLower(query)
-	for _, keyword := range intentKeywords {
-		if strings.Contains(queryLower, keyword) {
-			return entity, keyword
+
+	// Remove stop words and entity words
+	stopWords := map[string]bool{
+		"what": true, "is": true, "did": true, "was": true,
+		"where": true, "when": true, "who": true, "the": true,
+		"a": true, "an": true, "in": true, "on": true, "at": true,
+	}
+
+	var filteredTokens []string
+	for _, tok := range doc.Tokens() {
+		word := strings.ToLower(tok.Text)
+		if !stopWords[word] && !entityWords[word] {
+			filteredTokens = append(filteredTokens, word)
 		}
 	}
-	return entity, ""
+
+	intent := detectIntentFromTokens(filteredTokens)
+	return entity, intent
 }
 
-func matchIntentToRelations(intent string) ([]string, error) {
-	intentToRelations := map[string][]string{
-		"award":       {"Awarded", "AwardYear"},
-		"prize":       {"Awarded", "AwardYear"},
-		"receive":     {"Awarded", "AwardYear"},
-		"won":         {"Awarded", "AwardYear"},
-		"born":        {"BirthDate", "BirthPlace"},
-		"died":        {"DeathDate", "DiedIn"},
-		"study":       {"StudiedAt"},
-		"work":        {"WorkedAt", "Employer"},
-		"field":       {"Field"},
-		"known":       {"KnownFor"},
-		"citizen":     {"Citizenship", "Nationality"},
-		"nationality": {"Nationality"},
-		"occupation":  {"Occupation"},
-	}
-	if rels, ok := intentToRelations[intent]; ok {
-		return rels, nil
+func detectIntentFromTokens(tokens []string) string {
+	relations := []string{
+		"BirthPlace", "BirthDate", "DiedIn", "DeathDate", "Field", "KnownFor",
+		"Nationality", "Awarded", "WorkedAt", "StudiedAt", "AwardYear",
+		"Employer", "DoctoralInstitution", "Theory", "Membership", "Citizenship",
 	}
 
-	relations := []string{"BirthPlace", "BirthDate", "DiedIn", "DeathDate", "Field", "KnownFor", "Nationality", "Awarded", "WorkedAt", "StudiedAt", "AwardYear", "Employer", "DoctoralInstitution", "Theory", "Membership", "Citizenship"}
-	intent = strings.ToLower(intent)
-	for _, rel := range relations {
-		prefix := strings.ToLower(splitCamelCase(rel)[0])
-		if prefix == intent {
-			return []string{rel}, nil
+	// Step 1: Direct prefix match
+	for _, token := range tokens {
+		for _, rel := range relations {
+			parts := splitCamelCase(rel)
+			if len(parts) > 0 {
+				prefix := strings.ToLower(parts[0])
+				if prefix == token {
+					return token
+				}
+			}
 		}
 	}
 
-	ctx := context.Background()
-	session := driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeRead})
-	defer session.Close(ctx)
-	res, err := session.Run(ctx, `
-		MATCH (n)
-		WHERE ANY(alias IN n.aliases WHERE toLower(alias) CONTAINS toLower($intent))
-		RETURN n.name LIMIT 1`, map[string]interface{}{"intent": intent})
+	// Step 2: Check relation prefix synonyms against tokens
+	for _, rel := range relations {
+		parts := splitCamelCase(rel)
+		if len(parts) == 0 {
+			continue
+		}
+		prefix := strings.ToLower(parts[0])
+
+		syns, err := synonyms.GetSynonyms(prefix, 5)
+		if err != nil {
+			continue
+		}
+
+		for _, token := range tokens {
+			for _, syn := range syns {
+				if syn == token {
+					return token
+				}
+			}
+		}
+	}
+
+	return "generalinfo"
+}
+
+// Maps detected intent to relation(s)
+func matchIntentToRelations(intent string) ([]string, error) {
+	intent = strings.ToLower(intent)
+	relations := []string{
+		"BirthPlace", "BirthDate", "DiedIn", "DeathDate", "Field", "KnownFor",
+		"Nationality", "Awarded", "WorkedAt", "StudiedAt", "AwardYear",
+		"Employer", "DoctoralInstitution", "Theory", "Membership", "Citizenship",
+	}
+
+	var matched []string
+
+	// Step 1: Direct prefix match
+	for _, rel := range relations {
+		parts := splitCamelCase(rel)
+		if len(parts) > 0 {
+			prefix := strings.ToLower(parts[0])
+			if prefix == intent {
+				matched = append(matched, rel)
+			}
+		}
+	}
+	if len(matched) > 0 {
+		return matched, nil
+	}
+
+	// Step 2: Check synonym of intent against relation prefixes
+	syns, err := synonyms.GetSynonyms(intent, 5)
 	if err != nil {
 		return nil, err
 	}
-	if res.Next(ctx) {
-		rel, _ := res.Record().Get("n.name")
-		return []string{fmt.Sprint(rel)}, nil
-	}
 
-	syns, err := synonyms.GetSynonyms(intent, 5)
-	if err != nil {
-		return nil, nil
-	}
-	for _, syn := range syns {
-		rels, err := matchIntentToRelations(syn)
-		if err == nil && len(rels) > 0 {
-			return rels, nil
+	for _, rel := range relations {
+		parts := splitCamelCase(rel)
+		if len(parts) == 0 {
+			continue
+		}
+		prefix := strings.ToLower(parts[0])
+		for _, syn := range syns {
+			if prefix == syn {
+				matched = append(matched, rel)
+			}
 		}
 	}
+
+	if len(matched) > 0 {
+		return matched, nil
+	}
+
 	return nil, nil
 }
 
+// Splits camelCase to parts like ["Born", "In"] -> ["born", "in"]
 func splitCamelCase(s string) []string {
 	var words []string
 	current := ""
@@ -258,12 +306,13 @@ func splitCamelCase(s string) []string {
 	return words
 }
 
+// Builds Cypher query based on relation
 func buildCypher(relation, entity string) (string, map[string]interface{}) {
 	query := fmt.Sprintf(`MATCH (a) WHERE toLower(a.name) = toLower($name) MATCH (a)-[:%s]->(b) RETURN collect(b.name) AS related`, relation)
 	return query, map[string]interface{}{"name": entity}
 }
 
-// Try suggesting the nearest matching node by name
+// Suggests nearest entity match
 func suggestAlternative(sess neo4j.SessionWithContext, ctx context.Context, name string) (string, error) {
 	res, err := sess.Run(ctx, `MATCH (n) WHERE toLower(n.name) CONTAINS toLower($name) RETURN n.name LIMIT 1`, map[string]interface{}{"name": name})
 	if err != nil {
