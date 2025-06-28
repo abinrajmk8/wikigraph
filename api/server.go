@@ -9,7 +9,6 @@ import (
 	"os"
 	"strings"
 
-	"github.com/abinrajmk8/wikigraph/shared"
 	"github.com/abinrajmk8/wikigraph/synonyms"
 	"github.com/gorilla/mux"
 	"github.com/jdkato/prose/v2"
@@ -17,7 +16,6 @@ import (
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
 
-var graph *shared.Graph
 var driver neo4j.DriverWithContext
 
 func main() {
@@ -265,7 +263,7 @@ func matchIntentToRelations(intent string) ([]string, error) {
 	var matched []string
 	for _, rel := range relations {
 		parts := splitCamelCase(rel)
-		if len(parts) > 0 && strings.ToLower(parts[0]) == strings.ToLower(intent) {
+		if len(parts) > 0 && strings.EqualFold(parts[0], intent) {
 			matched = append(matched, rel)
 		}
 	}
