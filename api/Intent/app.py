@@ -1,23 +1,16 @@
 from flask import Flask, request, jsonify
-from transformers import AutoTokenizer, AutoModelForSequenceClassification
-from huggingface_hub import login
-from dotenv import load_dotenv
-import os
+from transformers import DistilBertTokenizer, DistilBertForSequenceClassification
 import torch
-
-# Load .env variables
-load_dotenv()
-login(os.getenv("HF_TOKEN"))  # Authenticate to Hugging Face
 
 app = Flask(__name__)
 
-# Load model and tokenizer from Hugging Face
-model_path = "abinrajmk8/intent-bert"
-tokenizer = AutoTokenizer.from_pretrained(model_path)
-model = AutoModelForSequenceClassification.from_pretrained(model_path)
+# Load tokenizer and model from local directory
+MODEL_DIR = "./intent-bert"
+tokenizer = DistilBertTokenizer.from_pretrained(MODEL_DIR)
+model = DistilBertForSequenceClassification.from_pretrained(MODEL_DIR)
 model.eval()
 
-# Label map (should match training)
+# Label map used during training (must match training order)
 label_map = {
     0: "Affiliation", 1: "AwardYear", 2: "Awarded", 3: "BirthDate", 4: "BirthPlace",
     5: "CauseOfDeath", 6: "Children", 7: "Citizenship", 8: "CoFounded", 9: "CollaboratedWith",
@@ -39,12 +32,12 @@ def predict():
     with torch.no_grad():
         outputs = model(**inputs)
         predicted_class = outputs.logits.argmax().item()
-        intent = label_map[predicted_class]
+        intent = label_map.get(predicted_class, "unknown")
 
     return jsonify({"intent": intent})
 
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))  # fallback to 5000 locally
+    import os
+    port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
-
