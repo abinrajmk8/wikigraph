@@ -1,0 +1,8 @@
+services:
+  - type: web
+    name: intent-finder
+    env: python
+    buildCommand: pip install -r api/Intent-finder/requirements.txt
+    startCommand: python api/Intent-finder/app.py
+    plan: free
+    autoDeploy: true
