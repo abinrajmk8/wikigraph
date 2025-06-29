@@ -2,3 +2,5 @@ flask
 transformers
 torch
 huggingface-hub
+python-dotenv
+
