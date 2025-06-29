@@ -63,3 +63,63 @@ frontend/node_modules/
 
 #environment variables
 .env
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+
+# Environment variable files
+.env
+.env.*
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+coverage.xml
+.cache
+nosetests.xml
+*.cover
+*.py,cover
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb
+
+# VS Code settings
+.vscode/
+
+# Hugging Face cache
+~/.cache/huggingface/
+*.safetensors
+
+# Model directory (local)
+**/intent_model/
+
+# Git LFS large files (optional)
+*.lfs*
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+desktop.ini
