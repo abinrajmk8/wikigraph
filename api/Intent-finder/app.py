@@ -1,6 +1,13 @@
 from flask import Flask, request, jsonify
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
+from huggingface_hub import login
+from dotenv import load_dotenv
+import os
 import torch
+
+# Load .env variables
+load_dotenv()
+login(os.getenv("HF_TOKEN"))  # Authenticate to Hugging Face
 
 app = Flask(__name__)
 
