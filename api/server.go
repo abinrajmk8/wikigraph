@@ -35,11 +35,28 @@ func main() {
 	defer driver.Close(ctx)
 
 	r := mux.NewRouter()
-	r.HandleFunc("/query", queryHandler).Methods("GET")
-	r.HandleFunc("/search", handleSearch).Methods("GET")
+	// Wrap the handler with your CORS middleware
+	r.HandleFunc("/query", withCORS(queryHandler)).Methods("GET", "OPTIONS")
+	r.HandleFunc("/search", withCORS(handleSearch)).Methods("GET", "OPTIONS")
 
 	log.Println("Server started at localhost:8080")
 	log.Fatal(http.ListenAndServe(":8080", r))
+}
+
+// Add this middleware
+func withCORS(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "http://localhost:3000")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		h(w, r)
+	}
 }
 
 // Extracts entity using prose, and intent from external Python API
